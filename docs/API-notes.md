@@ -198,7 +198,123 @@ grant_type=refresh_token&refresh_token=<...>
 
 参考实现：[Fucov/Pansh](https://github.com/Fucov/Pansh)（北航，Python；其公钥按 profile 手动配置为 `pubkey`）。
 
-### 2.5 调用 API
+### 2.6 统一身份认证（CAS）全自动登录
+
+**适用**：认证完全交给 CAS 的学校（AnyShare 侧没有本地密码，原生表单登录必然报"用户名或密码不正确"）。
+山东大学实测通过：全流程无需浏览器、无需点击、新设备只需一次短信验证。
+
+```
+1. GET /oauth2/auth            【手动逐跳跟随重定向，每跳都吸收 Set-Cookie】
+   ← 第一个 302 会下发 ory_hydra_login_csrf_<random>（关键！见下方坑 1）
+   从最终 URL 取 login_challenge
+2. 写入 Cookie: login_challenge=<值> 和 is_previous_login_3rd_party=true
+   （浏览器在点击「统一身份认证登录」按钮时写入；服务端靠它们恢复 OAuth 会话）
+3. GET <CAS>/cas/login?service=<base>/oauth2/signin   → lt / execution + CAS Cookie
+4. 凭据只藏在 rsa 字段：
+   rsa = strEnc(用户名 + 密码 + lt, '1', '2', '3')     # 学校 des.js 的 DES 实现
+   ul  = 用户名长度   pl = 密码长度                        # 服务端解密后据此切分
+   ⚠️ 用户名/密码【不作为独立字段提交】（页面提交前把输入框 disabled）
+5. POST <CAS>/cas/device  m:'1' + 完整设备指纹    → 查设备状态
+6. 需要短信时：m:'2' 触发发送 → 用户输入 → m:'3' {u, c:短信码, s:1 信任设备}
+7. POST <CAS>/cas/login（表单字段 rsa/ul/pl/lt/execution/_eventId）
+   → 302 Location: <base>/oauth2/signin?ticket=ST-xxx
+8. 带 ticket 回到 /oauth2/signin（带步骤 1-2 的 Cookie）
+   → 302 /oauth2/auth?...login_verifier=...   （Hydra 校验 CSRF Cookie）
+   → 302 /oauth2/consent?consent_challenge=...  → 302 /oauth2/auth?...consent_verifier=...
+   → 303 <redirect_uri>?code=ory_ac_...        ✅ 拿到授权码
+9. POST /oauth2/token (client_secret_basic, grant_type=authorization_code) → token
+```
+
+> 💡 实现要点：CAS 的 `strEnc` 直接从学校服务器加载（`<CAS>/cas/comm/js/des.js`，
+> 在 Node 里用 `vm` 执行），避免内置第三方代码，也永远跟得上学校改版。
+
+#### ⚠️ 坑 1：`fetch` 自动重定向会丢 Cookie（本项目最大的一坑）
+
+Node 的 `fetch` **没有 Cookie 罐**：用 `fetch(url, { redirect: 'follow' })` 时，
+**中间跳的 `Set-Cookie` 会被直接丢弃**，而 Hydra 的 CSRF Cookie
+（`ory_hydra_login_csrf_<random>`，`Path=/; HttpOnly; Secure; SameSite=None`）
+正是在第一个 302 里下发的。丢了它，第 8 步会得到：
+
+```
+request_forbidden: The request is not allowed.
+No CSRF value available in the session cookie.
+```
+
+**正确做法**：手动逐跳跟随，每一跳都吸收 Cookie：
+
+```js
+let cur = authUrl;
+for (let hop = 0; hop < 6 && cur; hop++) {
+  const r = await fetch(cur, { redirect: 'manual', headers: { Cookie: jar.header() } });
+  jar.absorb(r);                       // ✅ 每跳都收 Set-Cookie
+  const loc = r.headers.get('location');
+  if (!loc) break;
+  cur = new URL(loc, cur).toString();
+}
+```
+
+> 这个坑的迷惑性在于：**认证其实早就成功了**（CAS 票据有效、服务端也发了 303 回回调），
+> 只是回调用 `error=request_forbidden` 代替了 `code=...`。容易误判成"认证没通过"。
+
+#### ⚠️ 坑 2：设备状态字符串 `bind` vs `binded`
+
+用子串匹配 `/bind/i.test(info)` 会把 **`binded`（已信任）误判为需要短信**，
+然后去调 `m:'2'` 发短信（已信任设备会返回 500）并卡住。必须精确匹配。
+
+#### 设备验证（短信）状态机（实测）
+
+| 请求 | 响应 `info` | 含义 |
+|---|---|---|
+| `m:'1'` | `bind` + `m:'139*****3662'` | 新设备，需要短信验证（附屏蔽手机号） |
+| `m:'1'` | `binded` | 该设备已被信任，**可跳过短信** |
+| `m:'2'` | `send` | 短信已发送 |
+| `m:'2'` | `max` | 发送过于频繁（服务端限流） |
+| `m:'3'` | `most` | 验证通过（授信设备达上限，服务端自动解除最早一台） |
+| `m:'3'` | `codeErr` | 验证码错误（发新短信后旧码立即作废） |
+| `m:'3'` | `timeout` | 验证码已超时（约 5 分钟有效） |
+
+**`m:'1'` 与 `m:'3'` 的字段形式不同**（容易写错）：
+
+```js
+// m:'1' —— i 是【加密】的，且需要 d_s / d_md5 / d_browser_md5
+{ d: murmur, d_s: murmurS, d_md5: strEnc(...), d_browser_md5: strEnc(...),
+  i: strEnc(detailsS), m: '1', u: strEnc(user), p: strEnc(pwd) }
+
+// m:'3' —— d 用【murmurS】，i 用【明文】detailsS，u 用明文
+{ d: murmurS, i: detailsS, m: '3', u: user, c: 短信码, s: 1 /* 信任此设备 */ }
+```
+
+> 浏览器端用 Fingerprint2 生成 `murmur`/`murmurS`/`detailsS`；Node 端用确定性值即可
+> （本项目用 `md5(账号 + '|asy-cli')` 派生），且因为是确定性的，
+> **同一账号在多台机器上会被识别为同一台设备**——设备信任可"随身携带"。
+
+#### 被学校关闭的接口（排查记录）
+
+| 接口 | 结果 |
+|---|---|
+| `POST /api/eacp/v1/auth1/getbyticket` {ticket, service} | **403 第三方认证功能未开启**（学校关闭，客户端 SSO 用不了） |
+| `POST /api/authentication/v1/sso` | 400 `body.credential is required`（语义未知，未继续） |
+
+### 2.7 token 生命周期与轮换（多机部署必读）
+
+实测（山东大学）：
+
+```
+access_token  = ory_at_...   有效期 3599 秒 ≈ 60 分钟
+refresh_token = ory_rt_...   长期有效（Hydra TTL）
+```
+
+- **续期不需要重新登录**：`POST /oauth2/token` + `grant_type=refresh_token`
+  + `client_secret_basic`，实测 **135 ms**，无需密码 / 浏览器 / CAS
+- ⚠️ **refresh_token 会轮换**：每次续期服务端**下发新的 refresh_token，旧的立即作废**，
+  必须把新值存回配置（本项目 `applyToken()` 已处理）
+-  **多机部署禁忌**：两台机器**不能共用同一份 config.json** —— 
+  A 机器续期后 B 机器手里的 refresh_token 就失效了，B 会突然要求重新登录。
+  **正确做法：每台机器各自执行一次 `asy login --cas`**（全自动、设备已信任、免短信），
+  各自拥有独立的 token 链。
+
+### 2.8 调用 API
+
 
 ```http
 Authorization: Bearer <access_token>

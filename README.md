@@ -35,9 +35,11 @@ AnyShare 是通用产品，**多数高校的网盘大概率是同一套架构**�
 
 - **无需官方客户端**：不需要安装 AnyShare 桌面版
   （顺带解决了官方客户端 `winhook64.dll` 全局注入导致 Obsidian 等软件崩溃的问题）
-- **两种登录方式**：
+- **三种登录方式**：
   - 浏览器登录（推荐）：动态注册 OAuth2 客户端 + 本地回调服务器自动捕获授权码
   - **无浏览器登录**：学号 + 密码全自动（RSA 加密），适合**服务器/无图形环境无人值守**
+  - **统一身份认证（CAS）全自动登录**：`asy login --cas`，认证交给 CAS 的学校用这个
+    （如山东大学：原生表单对 CAS 用户无效，必须走 CAS；新设备一次短信，之后免验证）
 - **跨平台**：Windows / Linux / macOS 都能跑（纯 HTTP + Node.js）
 - **token 自动续期**：access_token 过期自动用 refresh_token 刷新
 - **流式传输**：上传下载不占内存，大文件也稳
@@ -109,7 +111,14 @@ asy login --password
 0 3 * * * cd /srv/backup && tar czf data-$(date +\%F).tgz data/ && asy put data-$(date +\%F).tgz /WebDAV/Backup/
 ```
 
-## 📖 命令一览
+### 💡 token 会自动续期（无需重新登录）
+
+- `access_token` 有效期约 **60 分钟**，过期时 CLI 用 `refresh_token` **静默续期（约 135 ms）**
+- ⚠️ `refresh_token` 会**轮换**（每次续期下发新的，旧的作废）
+- 🚨 **多机部署**：不要共用同一份 `~/.anyshare-cli/config.json`，
+  否则一台续期会让另一台的 refresh_token 失效；**每台机器各自 `asy login --cas` 即可**
+
+##  命令一览
 
 | 命令 | 说明 |
 |---|---|
