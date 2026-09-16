@@ -198,7 +198,29 @@ async function cmdLogin(args) {
       console.log(`✅ 已发现 ${found.bits} 位公钥（共 ${found.found} 把，取模数最大者）并保存到配置`);
     }
     console.log('正在登录（无浏览器模式）...');
-    await auth.loginWithPassword(cfg, { account, password, udid: args.flags.udid });
+    const captchaProvider = async ({ imageBase64, attempt }) => {
+      const os = require('os');
+      const imgPath = path.join(os.tmpdir(), `asy-captcha-${Date.now()}.jpg`);
+      fs.writeFileSync(imgPath, Buffer.from(imageBase64, 'base64'));
+      console.log(`\n该实例要求图形验证码${attempt > 1 ? `（第 ${attempt} 次尝试）` : ''}：`);
+      console.log(`  验证码图片: ${imgPath}`);
+      const { exec } = require('child_process');
+      try {
+        if (process.platform === 'win32') exec(`start "" "${imgPath}"`, () => {});
+        else if (process.platform === 'darwin') exec(`open "${imgPath}"`, () => {});
+        else exec(`xdg-open "${imgPath}"`, () => {});
+        console.log('  （已尝试自动打开图片）');
+      } catch { /* 打不开就让用户手动打开 */ }
+      const code = await prompt('请输入图中的验证码: ');
+      return String(code || '').trim();
+    };
+    await auth.loginWithPassword(cfg, {
+      account,
+      password,
+      udid: args.flags.udid,
+      captchaProvider,
+      onRetry: ({ attempt, message }) => console.log(`  ⚠️ 第 ${attempt} 次失败（${String(message).slice(0, 60)}），重新获取验证码...`),
+    });
     console.log('✅ 登录成功，token 已保存');
     password = '';
     return verifyLogin(cfg, args);

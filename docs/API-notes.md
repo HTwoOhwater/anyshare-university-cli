@@ -66,6 +66,40 @@ Content-Type: application/json
 > 💡 把 `redirect_uris` 填成 `http://127.0.0.1:<端口>/callback`，
 > 就能在 CLI 里起一个本地 HTTP 服务器**自动接收授权码**，无需手动复制回调 URL。
 
+#### ⚠️ `client_type` 决定「统一身份认证」按钮的行为（大坑）
+
+注册客户端时的 `metadata.device.client_type` 不只是个标签，它会**改变登录页上第三方登录按钮的行为**：
+
+| client_type | 按钮点击后 | 在普通浏览器里的表现 |
+|---|---|---|
+| `windows` / `mac_os`（桌面客户端） | `window.parent.postMessage({msg:"OauthUIOpenExternal", data:<CAS地址>}, "*")` —— 把"打开浏览器"的活交给桌面客户端外壳 | ❌ **点了毫无反应**（浏览器里没有父窗口接收这条消息） |
+| `web` / `mobile_web`（浏览器） | `top.location.href = <CAS地址>` 直接跳转 | ✅ 正常打开统一身份认证页 |
+
+登录页前端源码（对应逻辑）：
+
+```js
+H = ("windows" === client.client_type);            // 是否桌面客户端
+onClick = () => {
+  document.cookie = "is_previous_login_3rd_party=true; ...";
+  top && (H ? window.parent.postMessage({ msg: "OauthUIOpenExternal", data: cfg.authServer }, "*")
+            : top.window.location.href = cfg.authServer,
+          document.cookie = "login_challenge=" + challenge + "; ...");
+};
+```
+
+**结论：CLI / 浏览器流程注册客户端时必须用 `client_type: "web"`。**
+（本 CLI 的 `registerClient()` 默认已改为 `web`；踩坑代价：整整一轮排查。）
+
+####  相关机制：CAS 会话会让登录「看起来自动完成」
+
+如果浏览器里**已有统一身份认证会话**，`/oauth2/signin` 会直接 SSO 完成登录并跳回调，
+**完全不需要点那个按钮**。这解释了一个常见困惑：
+
+- 第一次登录成功 → 其实是复用了已有的 CAS 会话（没碰按钮）
+- 过一阵再登录失败 → CAS 会话过期，需要点按钮 → 而按钮因 `client_type` 问题点不动
+
+排查时先确认「浏览器里 CAS 会话是否有效」，再看按钮行为。
+
 ### 2.2 授权（浏览器 + 统一身份认证）
 
 ```http
