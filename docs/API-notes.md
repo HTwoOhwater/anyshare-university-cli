@@ -60,7 +60,7 @@ Content-Type: application/json
 成功返回 `201`：
 
 ```json
-{ "client_id": "b538b5ac-...", "client_secret": "_bsG69hl..." }
+{ "client_id": "<你的 client_id>", "client_secret": "<你的 client_secret>" }
 ```
 
 > 💡 把 `redirect_uris` 填成 `http://127.0.0.1:<端口>/callback`，
