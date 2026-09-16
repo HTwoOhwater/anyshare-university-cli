@@ -1,0 +1,19 @@
+{
+  "_comment": "AnyShare OAuth2 客户端注册模板。POST 到 {baseUrl}/oauth2/clients，把 redirect_uris 改成你自己的本地回调端口。",
+  "grant_types": ["authorization_code", "refresh_token", "implicit"],
+  "response_types": ["token id_token", "code", "token"],
+  "scope": "offline openid all",
+  "redirect_uris": ["http://127.0.0.1:8899/callback"],
+  "post_logout_redirect_uris": ["http://127.0.0.1:8899/logout"],
+  "client_name": "asy-cli",
+  "metadata": {
+    "device": {
+      "name": "RichClient",
+      "client_type": "windows",
+      "description": "asy-cli university cloud client"
+    }
+  },
+  "login_form": {
+    "remember_password_visible": true
+  }
+}

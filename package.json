@@ -1,0 +1,53 @@
+{
+  "name": "anyshare-university-cli",
+  "version": "0.1.0",
+  "description": "AnyShare 高校网盘命令行客户端 —— 不依赖官方客户端，直接用 HTTP API 同步/备份文件（目前适配山东大学 icloud.sdu.edu.cn）",
+  "keywords": [
+    "anyshare",
+    "university",
+    "cloud",
+    "cli",
+    "webdav",
+    "backup",
+    "sync",
+    "zotero",
+    "obsidian",
+    "sdu"
+  ],
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "asy.js",
+  "bin": {
+    "asy": "asy.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "files": [
+    "asy.js",
+    "lib/",
+    "asy",
+    "asy.bat",
+    "docs/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node asy.js",
+    "help": "node asy.js help"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HTwoOhwater/anyshare-university-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HTwoOhwater/anyshare-university-cli/issues"
+  },
+  "homepage": "https://github.com/HTwoOhwater/anyshare-university-cli#readme"
+}

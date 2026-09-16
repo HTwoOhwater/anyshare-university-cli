@@ -1,0 +1,18 @@
+# 依赖与构建产物
+node_modules/
+package-lock.json
+
+# 本地凭据（绝不要提交）
+config.json
+*.token
+.env
+
+# 调研/调试草稿（不入库）
+reference/
+
+# 日志与临时文件
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+desktop.ini
