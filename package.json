@@ -40,7 +40,9 @@
   ],
   "scripts": {
     "start": "node asy.js",
-    "help": "node asy.js help"
+    "help": "node asy.js help",
+    "check": "node scripts/syntax-check.js",
+    "test": "node --test test/unit.test.js test/cli.test.js"
   },
   "repository": {
     "type": "git",

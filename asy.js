@@ -26,6 +26,9 @@ asy —— AnyShare / 山大云盘命令行客户端
 认证
   asy register                   注册 CLI 专用 OAuth2 客户端（首次必做，自动）
   asy login                      浏览器登录（本地回调自动捕获授权码）★推荐
+  asy login --password           学号+密码 全自动登录（无浏览器，适合服务机/无图形环境）
+  asy login --account <学号> --password <密码>
+                                 脚本化登录（注意：密码会进入命令行历史）
   asy login --cookie "<cookie>"  从浏览器 document.cookie 导入（备用）
   asy login --refresh-token <t>  直接给 refresh_token
   asy login --code "<url|code>"  用授权码换取 token
@@ -85,6 +88,45 @@ async function prompt(question) {
   return new Promise((resolve) => rl.question(question, (ans) => { rl.close(); resolve(ans.trim()); }));
 }
 
+/** 隐藏输入的密码提示（不回显），跨平台 */
+async function promptPassword(question) {
+  if (!process.stdin.isTTY) {
+    // 非交互环境（管道/重定向）直接读一行
+    return await prompt(question);
+  }
+  return new Promise((resolve) => {
+    process.stdout.write(question);
+    const stdin = process.stdin;
+    const wasRaw = stdin.isRaw;
+    let buf = '';
+    const cleanup = () => {
+      stdin.removeListener('data', onData);
+      if (stdin.isTTY) stdin.setRawMode(wasRaw || false);
+      stdin.pause();
+    };
+    const onData = (chunk) => {
+      for (const ch of chunk.toString('utf8')) {
+        if (ch === '\r' || ch === '\n') {
+          cleanup();
+          process.stdout.write('\n');
+          resolve(buf);
+          return;
+        }
+        if (ch === '\u0003') { // Ctrl+C
+          cleanup();
+          process.stdout.write('\n');
+          process.exit(130);
+        }
+        if (ch === '\u007f' || ch === '\b') { buf = buf.slice(0, -1); continue; }
+        buf += ch;
+      }
+    };
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on('data', onData);
+  });
+}
+
 function makeApi(cfg, opts) { return new AnyShareApi(cfg, opts); }
 
 // ---------------------------------------------------------------- register
@@ -138,6 +180,27 @@ async function cmdLogin(args) {
     console.log('正在用授权码换取 token ...');
     await auth.exchangeCode(cfg, f.code);
     console.log('✅ 授权码换取成功');
+    return verifyLogin(cfg, args);
+  }
+
+  // 无浏览器登录：学号 + 密码（服务机/无图形环境适用）
+  if (f.password !== undefined || f.account) {
+    let account = typeof f.account === 'string' ? f.account : '';
+    let password = typeof f.password === 'string' ? f.password : '';
+    if (!account) account = await prompt('学号/工号: ');
+    if (!password) password = await promptPassword('密码（输入时不回显）: ');
+    if (!account || !password) throw new Error('账号与密码不能为空');
+    if (args.flags['discover-key']) {
+      console.log('正在从登录页自动发现 RSA 公钥 ...');
+      const found = await auth.discoverPublicKey(cfg);
+      cfg.publicKey = found.pem;
+      config.save(cfg);
+      console.log(`✅ 已发现 ${found.bits} 位公钥（共 ${found.found} 把，取模数最大者）并保存到配置`);
+    }
+    console.log('正在登录（无浏览器模式）...');
+    await auth.loginWithPassword(cfg, { account, password, udid: args.flags.udid });
+    console.log('✅ 登录成功，token 已保存');
+    password = '';
     return verifyLogin(cfg, args);
   }
 

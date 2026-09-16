@@ -109,7 +109,62 @@ grant_type=refresh_token&refresh_token=<...>
 - `/oauth2/auth` 只接受 **GET**（HEAD 会 405）
 - `state` 少于 8 字符会被拒（`invalid_state`）
 
-### 2.4 调用 API
+### 2.4 无浏览器登录（学号 + 密码，全自动）
+
+浏览器登录需要人工点一次；无人值守场景（服务器/定时任务）用这条链路：
+
+```
+1. GET /oauth2/auth?...&redirect_uri=<你的回调>&state=<≥8字符>
+   → 200 登录页 HTML（约 1.2MB，Next.js 应用）
+   从 HTML 提取:  "challenge":"<hex>"  和  "csrftoken":"<token>"
+   ️ 必须保存本次响应的 Set-Cookie（后续 CSRF 校验依赖会话 Cookie）
+
+2. RSA 加密密码：encrypt(password, RSAES-PKCS1-V1_5) → base64
+   ⚠️ 用「2048 位」公钥！（见下方"两把钥匙"）
+
+3. POST /oauth2/signin   （JSON，需带步骤 1 的 Cookie）
+   {
+     "_csrf": "<csrftoken>", "challenge": "<challenge>",
+     "account": "<学号>", "password": "<base64 密文>",
+     "vcode": {"id":"", "content":""},
+     "dualfactorauthinfo": {"validcode":{"vcode":""}, "OTP":{"OTP":""}},
+     "remember": false,
+     "device": {"name":"RichClient","description":"RichClient for windows",
+                "client_type":"windows","udids":["<MAC 形式设备号>"]}
+   }
+   → {"redirect": "<url>"}
+
+4. 跟随 redirect（手动模式，读 Location 头，直到出现 code=）→ 提取授权码
+   （不需要真的监听回调端口——只要从 Location 里读出 code 即可）
+
+5. POST /oauth2/token (client_secret_basic) 换 token
+```
+
+**实测错误对照**：
+
+| 现象 | 原因 |
+|---|---|
+| `403 csrf验证未通过` | 没带登录页的会话 Cookie |
+| `RSA_private_decrypt error` | 用错公钥（用了 1024 位那把） |
+| `401 请输入验证码` | 服务端要求验证码（账号错误或该校强制验证码） |
+
+#### ⚠️ 两把钥匙（重要坑）
+
+登录页 JS 里嵌了**两把** RSA 公钥（`publicKeyFromPem(...)`）：
+
+| 位数 | 用途 | 前端变量 |
+|---|---|---|
+| **2048 位** | **`/oauth2/signin` 提交登录密码** | `ee` |
+| 1024 位 | `/eacp/v1/auth1/sendauthvcode`（短信验证码） | `$` |
+
+用错钥匙的典型症状就是服务端 `RSA_private_decrypt error`。
+各校部署的钥匙可能不同，**可以自动发现**：抓取 `/oauth2/auth` 页面 → 下载其中引用的 JS
+（Next.js chunk）→ 正则 `publicKeyFromPem("...")` → 取模数最大的那把。
+本 CLI 的实现见 `discoverPublicKey()`（`asy login --password --discover-key`）。
+
+参考实现：[Fucov/Pansh](https://github.com/Fucov/Pansh)（北航，Python；其公钥按 profile 手动配置为 `pubkey`）。
+
+### 2.5 调用 API
 
 ```http
 Authorization: Bearer <access_token>
