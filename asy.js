@@ -26,7 +26,9 @@ asy —— AnyShare / 山大云盘命令行客户端
 认证
   asy register                   注册 CLI 专用 OAuth2 客户端（首次必做，自动）
   asy login                      浏览器登录（本地回调自动捕获授权码）★推荐
-  asy login --password           学号+密码 全自动登录（无浏览器，适合服务机/无图形环境）
+  asy login --cas              统一身份认证(CAS)自动登录：认证交给 CAS 的学校用这个
+                                  （新设备需短信验证，登录时自动勾选「信任此设备」）
+  asy login --password           学号+密码 全自动登录（适用于有本地密码的实例，可能需要图形验证码）
   asy login --account <学号> --password <密码>
                                  脚本化登录（注意：密码会进入命令行历史）
   asy login --cookie "<cookie>"  从浏览器 document.cookie 导入（备用）
@@ -180,6 +182,33 @@ async function cmdLogin(args) {
     console.log('正在用授权码换取 token ...');
     await auth.exchangeCode(cfg, f.code);
     console.log('✅ 授权码换取成功');
+    return verifyLogin(cfg, args);
+  }
+
+  // 统一身份认证（CAS）自动登录：适用于认证完全交给 CAS 的学校（如山大）
+  if (f.cas) {
+    let account = typeof f.account === 'string' ? f.account : '';
+    let password = typeof f.password === 'string' ? f.password : '';
+    if (!account) account = await prompt('学号/工号: ');
+    if (!password) password = await promptPassword('密码（输入时不回显）: ');
+    if (!account || !password) throw new Error('账号与密码不能为空');
+    console.log('正在登录（统一身份认证 / CAS 自动登录）...');
+    const smsCodeProvider = async ({ phone }) => {
+      console.log(`\n⚠️ 这是一台新设备，需要短信验证：`);
+      console.log(`   验证码短信已发送至: ${phone || '(绑定手机)'}`);
+      console.log('   （登录成功后该设备会被「信任」，以后同一设备无需再验证）');
+      return await prompt('请输入短信验证码: ');
+    };
+    await auth.loginWithCas(cfg, {
+      account,
+      password,
+      smsCodeProvider,
+      trustDevice: true,
+      debug: args.flags.debug,
+      casBase: typeof args.flags['cas-url'] === 'string' ? args.flags['cas-url'] : undefined,
+    });
+    console.log('✅ 登录成功，token 已保存');
+    password = '';
     return verifyLogin(cfg, args);
   }
 
