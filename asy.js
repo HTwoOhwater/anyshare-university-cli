@@ -151,6 +151,30 @@ async function cmdRegister(args) {
 async function cmdLogin(args) {
   const cfg = config.load();
   const f = args.flags;
+
+  // ── 登录态短路：已经登录成功就直接退出，不再走一遍登录流程 ──
+  //   （显式提供了凭据/授权码、或加了 --force 时才强制重新登录）
+  const explicitCreds = f.cookie || f['refresh-token'] || f.code ||
+    typeof f.account === 'string' || typeof f.password === 'string';
+  if (!explicitCreds && !args.flags.force && (cfg.refreshToken || cfg.accessToken)) {
+    process.stdout.write('检测到已有登录凭据，正在校验 ... ');
+    try {
+      await auth.ensureFresh(cfg, { force: false });
+      const { AnyShareApi } = require('./lib/api');
+      const api = new AnyShareApi(cfg, { silent: true });
+      const info = await api.userInfo();
+      console.log('✅');
+      console.log(`已经登录，无需重新登录：${info.name || cfg.rootName || ''}`);
+      const left = cfg.expiresAt ? Math.round((cfg.expiresAt - Date.now()) / 60000) : null;
+      if (left !== null) console.log(`当前 access_token 约 ${left} 分钟后过期，CLI 会自动续期（无需重新登录）`);
+      console.log('如需强制重新登录，请加 --force');
+      return;
+    } catch (e) {
+      console.log('凭据已失效，需要重新登录');
+      if (args.flags.debug) console.error('  (' + e.message + ')');
+    }
+  }
+
   const needClient = !f.cookie && !f['refresh-token'] && !f.code;
 
   if (needClient && (!cfg.clientId || !cfg.clientSecret)) {
