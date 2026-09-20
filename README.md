@@ -196,7 +196,7 @@ asy login
 - [ ] 大文件分片上传（`osinitmultiupload` / `osuploadpart` / `oscompleteupload`）
 - [ ] `sync` 双向同步（哈希比对 + 冲突处理）
 - [ ] `backup` 打包压缩 + 保留 N 份 + 定时任务
-- [ ] 作为 WebDAV 网关的后端（替代官方客户端）
+- [x] 作为 WebDAV 网关的后端（替代官方客户端）→ **[asy-webdav](https://github.com/HTwoOhwater/asy-webdav)**
 
 ## 🔗 同类项目
 
