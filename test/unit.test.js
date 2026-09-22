@@ -4,7 +4,16 @@ const assert = require('node:assert');
 const crypto = require('node:crypto');
 
 const auth = require('../lib/auth');
+const { AnyShareApi } = require('../lib/api');
 const { parseAuthEntries } = require('../lib/transfer');
+
+function validConfig() {
+  return {
+    baseUrl: 'https://example.edu.cn',
+    accessToken: 'test-token',
+    expiresAt: Date.now() + 120000,
+  };
+}
 
 test('parseCookieString: 解析 refresh_token / Authorization / subscriber-id', () => {
   const cookies = 'Authorization=Bearer abc.def.ghi; client.oauth2_refresh_token=eyJhbGciOi.refresh-part; x-subscriber-id=uuid-1234';
@@ -102,4 +111,36 @@ test('buildAuthorizeUrl: 使用配置的 client_id / redirect_uri，state ≥ 8 
   assert.strictEqual(u.searchParams.get('client_id'), 'cid-123');
   assert.strictEqual(u.searchParams.get('redirect_uri'), 'http://127.0.0.1:8899/callback');
   assert.ok(state.length >= 8, 'state 必须 ≥ 8 字符，否则服务端返回 invalid_state');
+});
+
+test('AnyShareApi: 挂起请求在截止时间后中止并返回可识别的 504', async () => {
+  let aborted = false;
+  const fakeFetch = (_url, opts) => new Promise((_resolve, reject) => {
+    opts.signal.addEventListener('abort', () => {
+      aborted = true;
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      reject(error);
+    }, { once: true });
+  });
+  const api = new AnyShareApi(validConfig(), { timeoutMs: 20, fetch: fakeFetch });
+
+  await assert.rejects(
+    api.call('GET', '/slow'),
+    (error) => error.status === 504 && error.data.code === 'ASY_REQUEST_TIMEOUT'
+  );
+  assert.strictEqual(aborted, true);
+});
+
+test('AnyShareApi: 网络错误转换为可识别的 503 且不泄露 token', async () => {
+  const api = new AnyShareApi(validConfig(), {
+    fetch: async () => { throw new TypeError('fetch failed'); },
+  });
+
+  await assert.rejects(api.call('GET', '/broken'), (error) => {
+    assert.strictEqual(error.status, 503);
+    assert.strictEqual(error.data.code, 'ASY_NETWORK_ERROR');
+    assert.doesNotMatch(error.message, /test-token/);
+    return true;
+  });
 });
